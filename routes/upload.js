@@ -7,11 +7,20 @@ import { uploadFile } from '../controllers/uploadController.js'
 import { adminAuth } from '../middleware/auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-export const uploadDir = path.join(__dirname, '..', 'uploads')
 
-// Ensure the uploads directory exists.
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true })
+// On serverless (Vercel) the project filesystem is read-only — only /tmp is
+// writable (and ephemeral). Locally/always-on hosts use a persistent ./uploads.
+export const uploadDir = process.env.VERCEL
+  ? '/tmp/uploads'
+  : path.join(__dirname, '..', 'uploads')
+
+// Ensure the uploads directory exists (never crash on read-only FS).
+try {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true })
+  }
+} catch (err) {
+  console.warn('Could not create uploads dir:', err.message)
 }
 
 const storage = multer.diskStorage({

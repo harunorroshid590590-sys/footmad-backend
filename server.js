@@ -45,6 +45,31 @@ app.use(express.urlencoded({ extended: true }))
 // Serve uploaded images (channel logos, match banners, etc.)
 app.use('/uploads', express.static(uploadDir))
 
+// Cached MongoDB connection (reused across serverless invocations so a cold
+// start connects once). Also runs one-time data init on first connect.
+let dbReady = null
+const connectDB = () => {
+  if (!dbReady) {
+    dbReady = mongoose
+      .connect(process.env.MONGODB_URI)
+      .then(async () => {
+        console.log('Connected to MongoDB')
+        await initializeDatabase()
+        return mongoose.connection
+      })
+      .catch((error) => {
+        dbReady = null // allow a retry on the next request
+        throw error
+      })
+  }
+  return dbReady
+}
+
+// Ensure the DB is connected before handling any request (serverless-safe).
+app.use((req, res, next) => {
+  connectDB().then(() => next()).catch(next)
+})
+
 // Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/matches', matchRoutes)
@@ -67,25 +92,23 @@ app.get('/api/health', (req, res) => {
 // Error handling
 app.use(errorHandler)
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => {
-    console.log('Connected to MongoDB')
-    
-    // Initialize database (admin user + demo matches)
-    initializeDatabase()
-    
-    // Start server
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`)
-      console.log(`API: http://localhost:${PORT}/api`)
-      console.log(`Admin: http://localhost:${PORT}/admin`)
+// Local / always-on hosts (Render, Railway, VPS, local dev): start a listening
+// server. On Vercel (serverless) the exported `app` is used as the handler.
+if (!process.env.VERCEL) {
+  connectDB()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`)
+        console.log(`API: http://localhost:${PORT}/api`)
+      })
     })
-  })
-  .catch((error) => {
-    console.error('MongoDB connection error:', error)
-    process.exit(1)
-  })
+    .catch((error) => {
+      console.error('MongoDB connection error:', error)
+      process.exit(1)
+    })
+}
+
+export default app
 
 async function createDefaultAdmin() {
   try {
@@ -144,10 +167,12 @@ async function initializeDatabase() {
       ])
     }
     
-    // Initialize scheduler
-    await initializeScheduler()
-    
-    // Initial API sync
+    // Initialize scheduler (cron) — only on always-on hosts, not serverless.
+    if (!process.env.VERCEL) {
+      await initializeScheduler()
+    }
+
+    // Initial API sync (warms the provider cache for this instance)
     console.log('Performing initial API sync...')
     const { syncWithAPI } = await import('./utils/api.js')
     await syncWithAPI()
