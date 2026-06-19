@@ -6,6 +6,8 @@ import compression from 'compression'
 import authRoutes from './routes/auth.js'
 import matchRoutes from './routes/matches.js'
 import streamRoutes from './routes/streams.js'
+import channelRoutes from './routes/channels.js'
+import uploadRoutes, { uploadDir } from './routes/upload.js'
 import adminRoutes from './routes/admin.js'
 import proxyRoutes from './routes/proxy.js'
 import adRoutes from './routes/ads.js'
@@ -17,6 +19,8 @@ import { errorHandler } from './middleware/errorHandler.js'
 import User from './models/User.js'
 import bcrypt from 'bcryptjs'
 import { seedDemoMatches } from './utils/seed.js'
+import { seedChannels } from './utils/seedChannels.js'
+import { applyChannelLogos } from './utils/channelLogos.js'
 import { initializeScheduler } from './utils/scheduler.js'
 
 dotenv.config()
@@ -38,10 +42,15 @@ app.use(compression())
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
+// Serve uploaded images (channel logos, match banners, etc.)
+app.use('/uploads', express.static(uploadDir))
+
 // Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/matches', matchRoutes)
 app.use('/api/streams', streamRoutes)
+app.use('/api/channels', channelRoutes)
+app.use('/api/upload', uploadRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/ads', adRoutes)
 app.use('/api/ad-config', adConfigRoutes)
@@ -105,6 +114,11 @@ async function initializeDatabase() {
     
     // DO NOT seed demo matches - use only real API data
     console.log('Skipping demo match seeding - using real API data only')
+
+    // Seed the branded channel grid (idempotent — skips if already present)
+    await seedChannels()
+    // Fill in channel logos from the logo CDN (only where not already set)
+    await applyChannelLogos()
     
     // Initialize default scheduler tasks
     const Scheduler = (await import('./models/Scheduler.js')).default

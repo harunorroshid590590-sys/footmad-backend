@@ -2,7 +2,8 @@ import Match from '../models/Match.js'
 import Stream from '../models/Stream.js'
 import Category from '../models/Category.js'
 import Settings from '../models/Settings.js'
-import { syncWithAPI } from '../utils/api.js'
+import MatchOverride from '../models/MatchOverride.js'
+import { syncWithAPI, clearCache } from '../utils/api.js'
 
 export const getStats = async (req, res) => {
   try {
@@ -89,7 +90,10 @@ export const updateSettings = async (req, res) => {
     
     Object.assign(settings, req.body)
     await settings.save()
-    
+
+    // Invalidate the provider cache so the new API config takes effect on next fetch.
+    clearCache()
+
     res.json(settings)
   } catch (error) {
     res.status(500).json({ message: error.message })
@@ -100,6 +104,43 @@ export const syncAPI = async (req, res) => {
   try {
     const result = await syncWithAPI()
     res.json(result)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// ===== Match banner overrides (for API-sourced matches) =====
+
+export const getOverrides = async (req, res) => {
+  try {
+    const overrides = await MatchOverride.find()
+    res.json(overrides)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+export const upsertOverride = async (req, res) => {
+  try {
+    const { matchId, banner } = req.body
+    if (!matchId) {
+      return res.status(400).json({ message: 'matchId is required' })
+    }
+    const override = await MatchOverride.findOneAndUpdate(
+      { matchId: String(matchId) },
+      { banner: banner || '', updatedAt: Date.now() },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    )
+    res.json(override)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+export const deleteOverride = async (req, res) => {
+  try {
+    await MatchOverride.findOneAndDelete({ matchId: String(req.params.matchId) })
+    res.json({ message: 'Override removed' })
   } catch (error) {
     res.status(500).json({ message: error.message })
   }

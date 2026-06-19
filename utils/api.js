@@ -1,18 +1,56 @@
 import axios from 'axios'
 import { buildDrmConfigFromProviderValue } from './proxy.js'
+import Settings from '../models/Settings.js'
 
-const PROVIDER_API_URL = process.env.PROVIDER_API_URL || 'https://events.ivan-flux.online/api/v1/user?username=footfy'
+const DEFAULT_PROVIDER_URL = process.env.PROVIDER_API_URL || 'https://events.ivan-flux.online/api/v1/user?username=footfy'
 
 // In-memory cache
 let cachedResponse = null
 let cacheTime = null
 const CACHE_DURATION = 3 * 60 * 1000 // 3 minutes
 
+/**
+ * Build the provider URL from the admin Settings (apiUrl + apiUsername).
+ * Falls back to the PROVIDER_API_URL env / default when Settings are unavailable.
+ * This is what makes the admin "API Configuration" form actually drive the feed.
+ */
+export const buildProviderUrl = async () => {
+  try {
+    const settings = await Settings.findOne()
+    const base = (settings?.apiUrl || '').trim()
+    const username = (settings?.apiUsername || '').trim()
+
+    if (base) {
+      try {
+        const url = new URL(base)
+        const existing = url.searchParams.get('username')
+        // Inject the configured username unless the URL already carries a non-empty one.
+        // Handles a dangling "?username=" (empty) that the admin form can leave behind.
+        if (!existing && username) {
+          url.searchParams.set('username', username)
+        }
+        return url.toString()
+      } catch {
+        // Not a parseable absolute URL — fall back to simple string handling.
+        if (/[?&]username=[^&]+/i.test(base)) return base
+        if (!username) return base
+        const separator = base.includes('?') ? '&' : '?'
+        return `${base}${separator}username=${encodeURIComponent(username)}`
+      }
+    }
+  } catch (error) {
+    console.warn('Could not read Settings for provider URL, using env/default:', error.message)
+  }
+
+  return DEFAULT_PROVIDER_URL
+}
+
 export const fetchFromExternalAPI = async () => {
   try {
-    console.log('Fetching from external API:', PROVIDER_API_URL)
-    
-    const response = await axios.get(PROVIDER_API_URL, {
+    const providerUrl = await buildProviderUrl()
+    console.log('Fetching from external API:', providerUrl)
+
+    const response = await axios.get(providerUrl, {
       proxy: false,
       timeout: 10000,
       headers: {
@@ -160,7 +198,16 @@ export const normalizeMatch = (event) => {
     const startTime = eventInfo.startTime ? new Date(eventInfo.startTime) : now
     const endTime = eventInfo.endTime ? new Date(eventInfo.endTime) : new Date(now.getTime() + 3 * 60 * 60 * 1000)
     const isLive = now >= startTime && now <= endTime
-    
+
+    // Derive a normalized status from the provider's `Status` field
+    // (more reliable than client-side time math), falling back to time when absent.
+    const providerStatus = String(eventInfo.Status || '').toLowerCase()
+    let status
+    if (providerStatus.includes('live')) status = 'live'
+    else if (providerStatus.includes('finish')) status = 'finished'
+    else if (providerStatus.includes('upcoming')) status = 'upcoming'
+    else status = isLive ? 'live' : (now < startTime ? 'upcoming' : 'finished')
+
     // Check publish status.
     // This provider does not send a `publish` field — it uses eventInfo.Status instead.
     // So treat events as published unless `publish` is explicitly set to a "off" value.
@@ -179,9 +226,11 @@ export const normalizeMatch = (event) => {
       homeLogo: eventInfo.teamAFlag || '',
       awayLogo: eventInfo.teamBFlag || '',
       banner: eventInfo.eventBanner || '',
+      image: event.image || '',
       startTime: eventInfo.startTime || '',
       endTime: eventInfo.endTime || '',
       isLive: isLive,
+      status: status,
       isHot: eventInfo.isHot === "1",
       streamsCount: servers.length,
       servers: servers,

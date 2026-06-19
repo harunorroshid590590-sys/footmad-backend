@@ -1,39 +1,58 @@
 import { getCachedMatches, syncWithAPI } from '../utils/api.js'
+import MatchOverride from '../models/MatchOverride.js'
+
+// Merge admin banner overrides (stored in Mongo, keyed by provider match id)
+// into the API-sourced matches.
+const applyOverrides = async (matches) => {
+  if (!Array.isArray(matches) || matches.length === 0) return matches
+  try {
+    const overrides = await MatchOverride.find()
+    if (!overrides.length) return matches
+    const bannerById = new Map(overrides.map(o => [String(o.matchId), o.banner]))
+    return matches.map(match => {
+      const banner = bannerById.get(String(match.id))
+      return banner ? { ...match, banner } : match
+    })
+  } catch (error) {
+    console.error('Failed to apply match overrides:', error.message)
+    return matches
+  }
+}
 
 export const getAllMatches = async (req, res) => {
   try {
     console.log('Fetching matches from cache')
-    
+
     // Get cached matches
     const { matches, fresh, age } = getCachedMatches()
-    
+
     if (matches.length > 0) {
       console.log(`Returning ${matches.length} cached matches (fresh: ${fresh}, age: ${age}ms)`)
-      return res.json(matches)
+      return res.json(await applyOverrides(matches))
     }
-    
+
     // If no cache, sync with API
     console.log('No cache found, syncing with API')
     const syncResult = await syncWithAPI()
-    
+
     if (syncResult.success && syncResult.matches) {
       console.log(`Synced ${syncResult.matches.length} matches from API`)
-      return res.json(syncResult.matches)
+      return res.json(await applyOverrides(syncResult.matches))
     }
-    
+
     // Return empty array if no matches available
     console.log('No matches available')
     res.json([])
   } catch (error) {
     console.error('Error fetching matches:', error.message)
-    
+
     // Try to return cached data even on error
     const { matches } = getCachedMatches()
     if (matches.length > 0) {
       console.log('Returning cached data due to error')
-      return res.json(matches)
+      return res.json(await applyOverrides(matches))
     }
-    
+
     res.status(500).json({ message: error.message })
   }
 }
@@ -52,14 +71,15 @@ export const getMatchById = async (req, res) => {
       matches = syncResult.matches || []
     }
     
-    // Find match by ID
-    let match = matches.find(m => m.id === matchId || m._id === matchId)
+    // Find match by ID (type-safe: provider ids are numbers, route param is a string)
+    const idEquals = (m) => String(m.id) === String(matchId) || String(m._id) === String(matchId)
+    let match = matches.find(idEquals)
 
     if (!match) {
       console.log('Match not found in cache, refreshing from API')
       const syncResult = await syncWithAPI()
       const refreshedMatches = syncResult.matches || []
-      match = refreshedMatches.find(m => m.id === matchId || m._id === matchId)
+      match = refreshedMatches.find(idEquals)
     }
     
     if (!match) {
@@ -69,7 +89,13 @@ export const getMatchById = async (req, res) => {
     
     console.log('Match found:', match.id)
     console.log('Stream count:', match.servers?.length || 0)
-    
+
+    // Apply banner override if one exists for this match.
+    const override = await MatchOverride.findOne({ matchId: String(match.id) })
+    if (override?.banner) {
+      match = { ...match, banner: override.banner }
+    }
+
     res.json(match)
   } catch (error) {
     console.error('Error fetching match by ID:', error.message)
