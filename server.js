@@ -34,8 +34,19 @@ const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://l
   .map(origin => origin.trim())
   .filter(Boolean)
 
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true // non-browser requests (curl, server-to-server)
+  if (corsOrigins.includes('*') || corsOrigins.includes(origin)) return true
+  try {
+    // Allow any Vercel deployment (production + preview URLs) by default.
+    return /\.vercel\.app$/i.test(new URL(origin).hostname)
+  } catch {
+    return false
+  }
+}
+
 app.use(cors({
-  origin: corsOrigins,
+  origin: (origin, callback) => callback(null, isAllowedOrigin(origin)),
   credentials: true
 }))
 app.use(compression())
