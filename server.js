@@ -84,9 +84,18 @@ app.use('/api/scheduler', schedulerRoutes)
 app.use('/api/debug', debugRoutes)
 app.use('/proxy', proxyRoutes)
 
+// Friendly root response (so the base URL isn't a bare "Cannot GET /")
+app.get('/', (req, res) => {
+  res.json({
+    name: 'FootMad API',
+    status: 'ok',
+    endpoints: ['/api/health', '/api/matches', '/api/channels']
+  })
+})
+
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'FOOTFY API is running' })
+  res.json({ status: 'ok', message: 'FootMad API is running' })
 })
 
 // Error handling
