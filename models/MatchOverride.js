@@ -17,6 +17,10 @@ const matchOverrideSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  pinned: {
+    type: Boolean,
+    default: false
+  },
   updatedAt: {
     type: Date,
     default: Date.now

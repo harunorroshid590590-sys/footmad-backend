@@ -8,11 +8,23 @@ const applyOverrides = async (matches) => {
   try {
     const overrides = await MatchOverride.find()
     if (!overrides.length) return matches
-    const bannerById = new Map(overrides.map(o => [String(o.matchId), o.banner]))
-    return matches.map(match => {
-      const banner = bannerById.get(String(match.id))
-      return banner ? { ...match, banner } : match
+    const byId = new Map(overrides.map(o => [String(o.matchId), o]))
+
+    const merged = matches.map(match => {
+      const ov = byId.get(String(match.id))
+      if (!ov) return match
+      return {
+        ...match,
+        ...(ov.banner ? { banner: ov.banner } : {}),
+        isPinned: !!ov.pinned
+      }
     })
+
+    // Pinned matches float to the top (stable order otherwise).
+    return merged
+      .map((m, i) => ({ m, i }))
+      .sort((a, b) => (b.m.isPinned ? 1 : 0) - (a.m.isPinned ? 1 : 0) || a.i - b.i)
+      .map(({ m }) => m)
   } catch (error) {
     console.error('Failed to apply match overrides:', error.message)
     return matches
@@ -90,10 +102,14 @@ export const getMatchById = async (req, res) => {
     console.log('Match found:', match.id)
     console.log('Stream count:', match.servers?.length || 0)
 
-    // Apply banner override if one exists for this match.
+    // Apply banner + pin override if one exists for this match.
     const override = await MatchOverride.findOne({ matchId: String(match.id) })
-    if (override?.banner) {
-      match = { ...match, banner: override.banner }
+    if (override) {
+      match = {
+        ...match,
+        ...(override.banner ? { banner: override.banner } : {}),
+        isPinned: !!override.pinned
+      }
     }
 
     res.json(match)
