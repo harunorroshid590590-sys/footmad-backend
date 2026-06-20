@@ -5,7 +5,8 @@ import Stream from '../models/Stream.js'
 
 const router = express.Router()
 
-const getBaseUrl = (req) => process.env.BASE_URL || `${req.protocol}://${req.get('host')}`
+const getBaseUrl = (req) =>
+  (process.env.BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '')
 
 const buildProxyManifestUrl = (req, absoluteUrl, query = {}) => {
   const extraParams = new URLSearchParams()
