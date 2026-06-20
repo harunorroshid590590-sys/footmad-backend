@@ -28,6 +28,11 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 5007
 
+// Behind a reverse proxy (Vercel/Render/Railway): trust X-Forwarded-* so
+// req.protocol is 'https'. The stream proxy uses this to build segment URLs —
+// without it, segments get rewritten as http:// and are blocked as mixed content.
+app.set('trust proxy', true)
+
 // Middleware
 const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
   .split(',')
