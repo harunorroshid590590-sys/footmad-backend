@@ -1,6 +1,7 @@
 import express from 'express'
 import {
   getAdConfig,
+  getVastAd,
   updateAdConfig,
   updateBannerAds,
   updatePopunderAds,
@@ -11,8 +12,9 @@ import { adminAuth } from '../middleware/auth.js'
 
 const router = express.Router()
 
-// Public route for getting ad config
+// Public routes
 router.get('/', getAdConfig)
+router.get('/vast', getVastAd)
 
 // Admin routes
 router.use(adminAuth)

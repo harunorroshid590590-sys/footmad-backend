@@ -51,6 +51,12 @@ const adConfigSchema = new mongoose.Schema({
     image: { type: String, default: '' },
     link: { type: String, default: '' }
   },
+  // Pre-roll video ad (VAST tag) played before the stream starts.
+  videoAd: {
+    enabled: { type: Boolean, default: false },
+    vastUrl: { type: String, default: '' },
+    skipAfter: { type: Number, default: 5 }
+  },
   updatedAt: {
     type: Date,
     default: Date.now

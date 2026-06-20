@@ -1,4 +1,23 @@
 import AdConfig from '../models/AdConfig.js'
+import { fetchVastAd } from '../utils/vast.js'
+
+// Public: resolve the configured VAST tag into a playable ad (server-side, to
+// avoid browser CORS on the ad XML). Returns { enabled:false } if unavailable.
+export const getVastAd = async (req, res) => {
+  try {
+    const config = await AdConfig.findOne()
+    const va = config?.videoAd
+    if (!va || !va.enabled || !va.vastUrl) return res.json({ enabled: false })
+
+    const ad = await fetchVastAd(va.vastUrl)
+    if (!ad || !ad.mediaFile) return res.json({ enabled: false })
+
+    res.json({ enabled: true, skipAfter: va.skipAfter ?? 5, ...ad })
+  } catch (error) {
+    console.error('VAST resolve failed:', error.message)
+    res.json({ enabled: false })
+  }
+}
 
 export const getAdConfig = async (req, res) => {
   try {
