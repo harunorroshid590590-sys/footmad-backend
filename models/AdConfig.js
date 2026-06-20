@@ -45,6 +45,12 @@ const adConfigSchema = new mongoose.Schema({
     frequency: { type: Number, default: 1 },
     maxPopupPerSession: { type: Number, default: 3 }
   },
+  // Clickable image banner shown on the watch page (above the match info).
+  watchBanner: {
+    enabled: { type: Boolean, default: false },
+    image: { type: String, default: '' },
+    link: { type: String, default: '' }
+  },
   updatedAt: {
     type: Date,
     default: Date.now

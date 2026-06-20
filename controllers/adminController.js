@@ -122,13 +122,14 @@ export const getOverrides = async (req, res) => {
 
 export const upsertOverride = async (req, res) => {
   try {
-    const { matchId, banner, pinned } = req.body
+    const { matchId, banner, bannerLink, pinned } = req.body
     if (!matchId) {
       return res.status(400).json({ message: 'matchId is required' })
     }
-    // Only update the fields actually provided so banner/pinned don't clobber each other.
+    // Only update the fields actually provided so they don't clobber each other.
     const update = { updatedAt: Date.now() }
     if (banner !== undefined) update.banner = banner || ''
+    if (bannerLink !== undefined) update.bannerLink = bannerLink || ''
     if (pinned !== undefined) update.pinned = !!pinned
 
     const override = await MatchOverride.findOneAndUpdate(

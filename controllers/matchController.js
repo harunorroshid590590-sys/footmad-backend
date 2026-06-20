@@ -16,6 +16,7 @@ const applyOverrides = async (matches) => {
       return {
         ...match,
         ...(ov.banner ? { banner: ov.banner } : {}),
+        bannerLink: ov.bannerLink || '',
         isPinned: !!ov.pinned
       }
     })
@@ -108,6 +109,7 @@ export const getMatchById = async (req, res) => {
       match = {
         ...match,
         ...(override.banner ? { banner: override.banner } : {}),
+        bannerLink: override.bannerLink || '',
         isPinned: !!override.pinned
       }
     }
