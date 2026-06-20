@@ -3,15 +3,26 @@ import Stream from '../models/Stream.js'
 import Category from '../models/Category.js'
 import Settings from '../models/Settings.js'
 import MatchOverride from '../models/MatchOverride.js'
-import { syncWithAPI, clearCache } from '../utils/api.js'
+import { syncWithAPI, clearCache, getCachedMatches } from '../utils/api.js'
 
 export const getStats = async (req, res) => {
   try {
-    const totalMatches = await Match.countDocuments()
-    const liveMatches = await Match.countDocuments({ status: 'live' })
-    const totalStreams = await Stream.countDocuments()
-    const categories = await Category.countDocuments()
-    
+    // Matches/streams are sourced from the provider API (cached in memory),
+    // not Mongo — so derive the dashboard stats from there.
+    let { matches } = getCachedMatches()
+    if (!matches || matches.length === 0) {
+      const syncResult = await syncWithAPI()
+      matches = syncResult.matches || []
+    }
+
+    const isLive = (m) => m.status === 'live' || m.isLive === true
+    const totalMatches = matches.length
+    const liveMatches = matches.filter(isLive).length
+    const totalStreams = matches.reduce((sum, m) => sum + (m.servers?.length || 0), 0)
+    const categories = new Set(
+      matches.map((m) => m.category).filter(Boolean)
+    ).size
+
     res.json({
       totalMatches,
       liveMatches,
