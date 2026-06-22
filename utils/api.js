@@ -4,9 +4,18 @@ import Settings from '../models/Settings.js'
 
 const DEFAULT_PROVIDER_URL = process.env.PROVIDER_API_URL || 'https://events.ivan-flux.online/api/v1/user?username=footfy'
 
-// In-memory cache
-let cachedResponse = null
+// In-memory cache.
+// IMPORTANT: there are two distinct caches with two distinct shapes — keep them
+// separate. `cachedResponse` holds the RAW provider payload (events carry
+// `channels_data`). `normalizedCache` holds the result of normalizeMatch()
+// (matches carry `servers`). Mixing them caused matches to vanish: on a provider
+// timeout the error path returned the normalized cache, which was then re-fed
+// through normalizeMatch() — which only reads `channels_data` — yielding 0 servers
+// and wiping every stream. Normalization must ONLY ever run on raw provider data.
+let cachedResponse = null      // raw provider payload
 let cacheTime = null
+let normalizedCache = null     // last successfully normalized matches (have .servers)
+let normalizedCacheTime = null
 const CACHE_DURATION = 3 * 60 * 1000 // 3 minutes
 
 /**
@@ -52,7 +61,7 @@ export const fetchFromExternalAPI = async () => {
 
     const response = await axios.get(providerUrl, {
       proxy: false,
-      timeout: 10000,
+      timeout: 20000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
@@ -154,6 +163,13 @@ const detectStreamType = (streamUrl = '', providerType = '') => {
 
 export const normalizeMatch = (event) => {
   try {
+    // Defensive guard: if we are ever handed an already-normalized match
+    // (carries `servers`, no raw `channels_data`), pass it straight through.
+    // Re-normalizing it would read the absent `channels_data` and wipe its streams.
+    if (event && Array.isArray(event.servers) && !event.channels_data) {
+      return event
+    }
+
     const eventInfo = event.eventInfo || {}
     
     // Map channels_data to servers
@@ -267,17 +283,25 @@ export const syncWithAPI = async () => {
     }
     
     console.log(`Normalized ${normalizedCount} matches, skipped ${skippedCount} (unpublished or invalid)`)
-    
-    // Update cache with normalized data
-    cachedResponse = { events: normalizedMatches }
-    cacheTime = Date.now()
-    
-    return { 
-      success: true, 
-      normalizedCount, 
-      skippedCount, 
+
+    // Store normalized data in its OWN cache. Never overwrite `cachedResponse`
+    // (the raw provider payload) — that is what fetchFromExternalAPI re-reads on a
+    // timeout and feeds back through normalizeMatch(). Keeping them separate is the
+    // fix for matches disappearing whenever the provider throttled the fetch.
+    // Also: only replace the last-good normalized cache when this sync actually
+    // produced matches, so a transient empty/failed provider response can't blank
+    // the site — getCachedMatches keeps serving the previous good set.
+    if (normalizedMatches.length > 0) {
+      normalizedCache = normalizedMatches
+      normalizedCacheTime = Date.now()
+    }
+
+    return {
+      success: true,
+      normalizedCount,
+      skippedCount,
       matches: normalizedMatches,
-      cached 
+      cached
     }
   } catch (error) {
     console.error('Sync error:', error)
@@ -286,11 +310,12 @@ export const syncWithAPI = async () => {
 }
 
 export const getCachedMatches = () => {
-  if (cachedResponse && cacheTime) {
-    const age = Date.now() - cacheTime
+  // Serve the normalized cache (matches with `servers`) — never the raw payload.
+  if (normalizedCache && normalizedCacheTime) {
+    const age = Date.now() - normalizedCacheTime
     const isFresh = age < CACHE_DURATION
-    console.log(`Cache age: ${Math.floor(age / 1000)}s, fresh: ${isFresh}`)
-    return { matches: cachedResponse.events || [], fresh: isFresh, age }
+    console.log(`Cache age: ${Math.floor(age / 1000)}s, fresh: ${isFresh}, matches: ${normalizedCache.length}`)
+    return { matches: normalizedCache, fresh: isFresh, age }
   }
   return { matches: [], fresh: false, age: null }
 }
@@ -298,5 +323,7 @@ export const getCachedMatches = () => {
 export const clearCache = () => {
   cachedResponse = null
   cacheTime = null
+  normalizedCache = null
+  normalizedCacheTime = null
   console.log('Cache cleared')
 }
