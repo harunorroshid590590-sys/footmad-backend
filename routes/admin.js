@@ -10,7 +10,13 @@ import {
   initializeCategories,
   getOverrides,
   upsertOverride,
-  deleteOverride
+  deleteOverride,
+  updateMatchLinks,
+  resetMatchLinks,
+  setMatchHidden,
+  createCustomMatch,
+  updateCustomMatch,
+  deleteCustomMatch
 } from '../controllers/adminController.js'
 import { adminAuth } from '../middleware/auth.js'
 
@@ -20,6 +26,12 @@ router.use(adminAuth)
 
 router.get('/stats', getStats)
 router.get('/matches', getAllMatchesAdmin)
+router.put('/matches/:matchId/links', updateMatchLinks)
+router.post('/matches/:matchId/reset', resetMatchLinks)
+router.post('/matches/:matchId/hide', setMatchHidden)
+router.post('/custom-matches', createCustomMatch)
+router.put('/custom-matches/:matchId', updateCustomMatch)
+router.delete('/custom-matches/:matchId', deleteCustomMatch)
 router.get('/streams', getAllStreamsAdmin)
 router.get('/categories', getAllCategoriesAdmin)
 router.get('/settings', getSettings)

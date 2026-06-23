@@ -25,6 +25,21 @@ const matchOverrideSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Admin-edited stream links. When `serversEdited` is true these REPLACE the
+  // API's links for this match; "Reset" sets it back to false to restore the API.
+  servers: {
+    type: Array,
+    default: []
+  },
+  serversEdited: {
+    type: Boolean,
+    default: false
+  },
+  // Hidden matches are removed from the public feed (admin can still see/unhide).
+  hidden: {
+    type: Boolean,
+    default: false
+  },
   updatedAt: {
     type: Date,
     default: Date.now

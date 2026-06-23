@@ -161,6 +161,44 @@ const detectStreamType = (streamUrl = '', providerType = '') => {
   return 'direct'
 }
 
+/**
+ * Build one normalized server object from a provider/admin channel
+ * ({ title, link, type, api, logo, quality }). Returns null if the link has no
+ * usable URL. Shared by normalizeMatch (provider feed) and the admin link editor
+ * so admin-entered links get the same URL/DRM/header handling as API links.
+ */
+export const buildServerFromChannel = (channel = {}) => {
+  const originalLink = channel.link || ''
+  const providerType = String(channel.type || '0')
+  const drmKey = channel.api || ''
+  const { url: cleanUrl, headers } = parseProviderStreamLink(originalLink)
+  const streamType = detectStreamType(cleanUrl, providerType)
+  const { drm, drmError } = buildDrmConfig(drmKey)
+
+  if (!cleanUrl) return null
+
+  return {
+    title: channel.title || 'Stream',
+    name: channel.title || 'Stream',
+    streamUrl: cleanUrl,
+    url: cleanUrl,
+    externalUrl: cleanUrl,
+    drmKey: drmKey,
+    drm,
+    drmError,
+    type: streamType,
+    providerType,
+    logo: channel.logo || '',
+    quality: channel.quality || 'auto',
+    headers,
+    referer: headers.Referer || '',
+    origin: headers.Origin || '',
+    userAgent: headers['User-Agent'] || '',
+    // Per-stream admin hide flag (provider channels are never hidden by default).
+    hidden: channel.hidden === true
+  }
+}
+
 export const normalizeMatch = (event) => {
   try {
     // Defensive guard: if we are ever handed an already-normalized match
@@ -171,42 +209,19 @@ export const normalizeMatch = (event) => {
     }
 
     const eventInfo = event.eventInfo || {}
-    
+
     // Map channels_data to servers
     const servers = []
     if (event.channels_data && Array.isArray(event.channels_data)) {
       for (const channel of event.channels_data) {
-        const originalLink = channel.link || ''
-        const providerType = String(channel.type || '0')
-        const drmKey = channel.api || ''
-        const { url: cleanUrl, headers } = parseProviderStreamLink(originalLink)
-        const streamType = detectStreamType(cleanUrl, providerType)
-        const { drm, drmError } = buildDrmConfig(drmKey)
-
+        const server = buildServerFromChannel(channel)
         // Only add server if it has a valid stream URL
-        if (cleanUrl) {
-          servers.push({
-            title: channel.title || 'Stream',
-            name: channel.title || 'Stream',
-            streamUrl: cleanUrl,
-            url: cleanUrl,
-            externalUrl: cleanUrl,
-            drmKey: drmKey,
-            drm,
-            drmError,
-            type: streamType,
-            providerType,
-            logo: channel.logo || '',
-            quality: channel.quality || 'auto',
-            headers,
-            referer: headers.Referer || '',
-            origin: headers.Origin || '',
-            userAgent: headers['User-Agent'] || ''
-          })
+        if (server) {
+          servers.push(server)
         }
       }
     }
-    
+
     console.log(`Normalized match ${event.id}: ${servers.length} servers`)
     
     // Calculate live status

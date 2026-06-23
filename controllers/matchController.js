@@ -1,8 +1,42 @@
 import { getCachedMatches, syncWithAPI } from '../utils/api.js'
 import MatchOverride from '../models/MatchOverride.js'
+import CustomMatch from '../models/CustomMatch.js'
+import { buildMatchFromCustom } from '../utils/customMatch.js'
 
-// Merge admin banner overrides (stored in Mongo, keyed by provider match id)
-// into the API-sourced matches.
+// Load admin-created matches and normalize them to the provider match shape so
+// they can be merged into the public feed. Newest first.
+const getCustomMatchesNormalized = async () => {
+  try {
+    const docs = await CustomMatch.find().sort({ createdAt: -1 })
+    return docs.map(buildMatchFromCustom)
+  } catch (error) {
+    console.error('Failed to load custom matches:', error.message)
+    return []
+  }
+}
+
+// Merge a single admin override (banner / pin / edited links) into one match.
+export const mergeOverrideIntoMatch = (match, ov) => {
+  if (!ov) return match
+  const merged = {
+    ...match,
+    ...(ov.banner ? { banner: ov.banner } : {}),
+    bannerLink: ov.bannerLink || '',
+    isPinned: !!ov.pinned
+  }
+  // Admin-edited links replace the API's links for this match. Individually
+  // hidden streams are dropped from the public feed (kept in the override so
+  // the admin can unhide them).
+  if (ov.serversEdited) {
+    const servers = (Array.isArray(ov.servers) ? ov.servers : []).filter(s => !s.hidden)
+    merged.servers = servers
+    merged.streamsCount = servers.length
+  }
+  return merged
+}
+
+// Merge admin overrides (stored in Mongo, keyed by provider match id) into the
+// API-sourced matches: hide hidden matches, apply edited links/banner/pin.
 const applyOverrides = async (matches) => {
   if (!Array.isArray(matches) || matches.length === 0) return matches
   try {
@@ -10,16 +44,10 @@ const applyOverrides = async (matches) => {
     if (!overrides.length) return matches
     const byId = new Map(overrides.map(o => [String(o.matchId), o]))
 
-    const merged = matches.map(match => {
-      const ov = byId.get(String(match.id))
-      if (!ov) return match
-      return {
-        ...match,
-        ...(ov.banner ? { banner: ov.banner } : {}),
-        bannerLink: ov.bannerLink || '',
-        isPinned: !!ov.pinned
-      }
-    })
+    const merged = matches
+      // Hidden matches are removed from the public feed entirely.
+      .filter(match => !byId.get(String(match.id))?.hidden)
+      .map(match => mergeOverrideIntoMatch(match, byId.get(String(match.id))))
 
     // Pinned matches float to the top (stable order otherwise).
     return merged
@@ -36,12 +64,16 @@ export const getAllMatches = async (req, res) => {
   try {
     console.log('Fetching matches from cache')
 
+    // Admin-created matches always appear (prepended), even if the provider
+    // cache is empty.
+    const customMatches = await getCustomMatchesNormalized()
+
     // Get cached matches
     const { matches, fresh, age } = getCachedMatches()
 
     if (matches.length > 0) {
       console.log(`Returning ${matches.length} cached matches (fresh: ${fresh}, age: ${age}ms)`)
-      return res.json(await applyOverrides(matches))
+      return res.json([...customMatches, ...(await applyOverrides(matches))])
     }
 
     // If no cache, sync with API
@@ -50,12 +82,12 @@ export const getAllMatches = async (req, res) => {
 
     if (syncResult.success && syncResult.matches) {
       console.log(`Synced ${syncResult.matches.length} matches from API`)
-      return res.json(await applyOverrides(syncResult.matches))
+      return res.json([...customMatches, ...(await applyOverrides(syncResult.matches))])
     }
 
-    // Return empty array if no matches available
-    console.log('No matches available')
-    res.json([])
+    // No provider matches — still return any custom matches.
+    console.log('No provider matches available')
+    res.json(customMatches)
   } catch (error) {
     console.error('Error fetching matches:', error.message)
 
@@ -74,7 +106,14 @@ export const getMatchById = async (req, res) => {
   try {
     const matchId = req.params.id
     console.log('Fetching match by ID:', matchId)
-    
+
+    // Custom (admin-created) matches take precedence and aren't in the cache.
+    const customDoc = await CustomMatch.findOne({ matchId: String(matchId) })
+    if (customDoc) {
+      console.log('Returning custom match:', matchId)
+      return res.json(buildMatchFromCustom(customDoc))
+    }
+
     // Get cached matches
     let { matches } = getCachedMatches()
     
@@ -103,16 +142,13 @@ export const getMatchById = async (req, res) => {
     console.log('Match found:', match.id)
     console.log('Stream count:', match.servers?.length || 0)
 
-    // Apply banner + pin override if one exists for this match.
+    // Apply admin override (banner / pin / edited links / hidden) if one exists.
     const override = await MatchOverride.findOne({ matchId: String(match.id) })
-    if (override) {
-      match = {
-        ...match,
-        ...(override.banner ? { banner: override.banner } : {}),
-        bannerLink: override.bannerLink || '',
-        isPinned: !!override.pinned
-      }
+    if (override?.hidden) {
+      console.log('Match is hidden by admin override')
+      return res.status(404).json({ message: 'Match not found' })
     }
+    match = mergeOverrideIntoMatch(match, override)
 
     res.json(match)
   } catch (error) {

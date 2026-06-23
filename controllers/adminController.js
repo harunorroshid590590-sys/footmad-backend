@@ -3,7 +3,9 @@ import Stream from '../models/Stream.js'
 import Category from '../models/Category.js'
 import Settings from '../models/Settings.js'
 import MatchOverride from '../models/MatchOverride.js'
-import { syncWithAPI, clearCache, getCachedMatches } from '../utils/api.js'
+import CustomMatch from '../models/CustomMatch.js'
+import { syncWithAPI, clearCache, getCachedMatches, buildServerFromChannel } from '../utils/api.js'
+import { buildMatchFromCustom } from '../utils/customMatch.js'
 
 export const getStats = async (req, res) => {
   try {
@@ -36,11 +38,154 @@ export const getStats = async (req, res) => {
 
 export const getAllMatchesAdmin = async (req, res) => {
   try {
-    const matches = await Match.find()
-      .populate('streams')
-      .sort({ createdAt: -1 })
-    
-    res.json(matches)
+    // Matches are sourced from the provider API (cached in memory), not Mongo,
+    // so the admin table must read the same cache the public site does.
+    let { matches } = getCachedMatches()
+    if (!matches || matches.length === 0) {
+      const syncResult = await syncWithAPI()
+      matches = syncResult.matches || []
+    }
+
+    // Annotate each match with its admin override state so the table can show
+    // the effective (edited) links and the right actions (Reset / Unhide).
+    const overrides = await MatchOverride.find()
+    const byId = new Map(overrides.map(o => [String(o.matchId), o]))
+
+    const annotated = matches.map(m => {
+      const ov = byId.get(String(m.id))
+      // Admin sees ALL servers (including per-stream hidden ones, so they can
+      // unhide them); the Streams count reflects what the public actually sees.
+      const servers = ov?.serversEdited ? (ov.servers || []) : (m.servers || [])
+      return {
+        ...m,
+        servers,
+        streamsCount: servers.filter(s => !s.hidden).length,
+        isPinned: !!ov?.pinned,
+        isHidden: !!ov?.hidden,
+        isEdited: !!ov?.serversEdited
+      }
+    })
+
+    // Admin-created matches (editable + deletable) shown at the top.
+    const customDocs = await CustomMatch.find().sort({ createdAt: -1 })
+    const custom = customDocs.map(d => ({ ...buildMatchFromCustom(d), isCustom: true }))
+
+    res.json([...custom, ...annotated])
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// ===== Per-match link editing (Edit / Reset) and Hide (for API matches) =====
+
+// Save admin-edited stream links for a match. Raw rows ({ title, link, drmKey,
+// type }) are normalized the same way provider links are, then stored as an
+// override that replaces the API's links until Reset.
+export const updateMatchLinks = async (req, res) => {
+  try {
+    const { matchId } = req.params
+    const rows = Array.isArray(req.body.servers) ? req.body.servers : []
+    const servers = rows
+      .map(r => buildServerFromChannel({ title: r.title, link: r.link, api: r.drmKey, type: r.type, hidden: r.hidden === true }))
+      .filter(Boolean)
+
+    const override = await MatchOverride.findOneAndUpdate(
+      { matchId: String(matchId) },
+      { $set: { servers, serversEdited: true, updatedAt: Date.now() }, $setOnInsert: { matchId: String(matchId) } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    )
+    res.json(override)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// Reset a match's links back to the API (clears the link override).
+export const resetMatchLinks = async (req, res) => {
+  try {
+    const { matchId } = req.params
+    const override = await MatchOverride.findOneAndUpdate(
+      { matchId: String(matchId) },
+      { $set: { servers: [], serversEdited: false, updatedAt: Date.now() }, $setOnInsert: { matchId: String(matchId) } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    )
+    res.json(override)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// Hide / unhide a match from the public site.
+export const setMatchHidden = async (req, res) => {
+  try {
+    const { matchId } = req.params
+    const hidden = !!req.body.hidden
+    const override = await MatchOverride.findOneAndUpdate(
+      { matchId: String(matchId) },
+      { $set: { hidden, updatedAt: Date.now() }, $setOnInsert: { matchId: String(matchId) } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    )
+    res.json(override)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// ===== Custom (admin-created) matches =====
+
+// Map a request body to CustomMatch fields (shared by create + update).
+const customMatchFields = (body = {}) => ({
+  category: body.category || 'Football',
+  status: body.status || 'normal',
+  eventName: body.eventName || '',
+  tournamentLogo: body.tournamentLogo || '',
+  homeTeam: body.homeTeam || '',
+  homeLogo: body.homeLogo || '',
+  awayTeam: body.awayTeam || '',
+  awayLogo: body.awayLogo || '',
+  startTime: body.startTime ? new Date(body.startTime) : new Date(),
+  durationMinutes: Number(body.durationMinutes) || 120,
+  banner: body.banner || '',
+  channels: (Array.isArray(body.channels) ? body.channels : [])
+    .filter(c => (c.link || '').trim())
+    .map((c, i) => ({
+      title: (c.title || 'Stream').trim(),
+      type: (c.type || 'M3U8').trim(),
+      link: (c.link || '').trim(),
+      drm: (c.drm || '').trim(),
+      order: Number(c.order) || i + 1
+    }))
+})
+
+export const createCustomMatch = async (req, res) => {
+  try {
+    const matchId = `custom-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+    const doc = await CustomMatch.create({ matchId, ...customMatchFields(req.body) })
+    res.status(201).json(buildMatchFromCustom(doc))
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+export const updateCustomMatch = async (req, res) => {
+  try {
+    const { matchId } = req.params
+    const doc = await CustomMatch.findOneAndUpdate(
+      { matchId: String(matchId) },
+      { $set: { ...customMatchFields(req.body), updatedAt: Date.now() } },
+      { new: true }
+    )
+    if (!doc) return res.status(404).json({ message: 'Custom match not found' })
+    res.json(buildMatchFromCustom(doc))
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+export const deleteCustomMatch = async (req, res) => {
+  try {
+    await CustomMatch.findOneAndDelete({ matchId: String(req.params.matchId) })
+    res.json({ message: 'Custom match deleted' })
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
