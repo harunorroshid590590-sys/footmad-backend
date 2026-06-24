@@ -5,7 +5,7 @@ import Settings from '../models/Settings.js'
 import MatchOverride from '../models/MatchOverride.js'
 import CustomMatch from '../models/CustomMatch.js'
 import { syncWithAPI, clearCache, getCachedMatches, buildServerFromChannel } from '../utils/api.js'
-import { buildMatchFromCustom } from '../utils/customMatch.js'
+import { buildMatchFromCustom, applyFieldOverride } from '../utils/customMatch.js'
 
 export const getStats = async (req, res) => {
   try {
@@ -56,19 +56,32 @@ export const getAllMatchesAdmin = async (req, res) => {
       // Admin sees ALL servers (including per-stream hidden ones, so they can
       // unhide them); the Streams count reflects what the public actually sees.
       const servers = ov?.serversEdited ? (ov.servers || []) : (m.servers || [])
+      // Apply full-field edits so the table + edit form show the edited values.
+      const withFields = applyFieldOverride(m, ov)
       return {
-        ...m,
+        ...withFields,
         servers,
         streamsCount: servers.filter(s => !s.hidden).length,
         isPinned: !!ov?.pinned,
         isHidden: !!ov?.hidden,
-        isEdited: !!ov?.serversEdited
+        isEdited: !!(ov?.serversEdited || ov?.fieldsEdited)
       }
     })
 
-    // Admin-created matches (editable + deletable) shown at the top.
+    // Admin-created matches (editable + deletable) shown at the top, annotated
+    // with their pin/banner override so the table reflects the pinned state.
     const customDocs = await CustomMatch.find().sort({ createdAt: -1 })
-    const custom = customDocs.map(d => ({ ...buildMatchFromCustom(d), isCustom: true }))
+    const custom = customDocs.map(d => {
+      const ov = byId.get(String(d.matchId))
+      const m = buildMatchFromCustom(d)
+      return {
+        ...m,
+        streamsCount: (m.servers || []).filter(s => !s.hidden).length,
+        isCustom: true,
+        isPinned: !!ov?.pinned,
+        isHidden: !!ov?.hidden
+      }
+    })
 
     res.json([...custom, ...annotated])
   } catch (error) {
@@ -100,13 +113,63 @@ export const updateMatchLinks = async (req, res) => {
   }
 }
 
-// Reset a match's links back to the API (clears the link override).
+// Reset an API match back to the original API data — clears both the link edits
+// and the full-field edits. (Pin/banner/hide are separate and left untouched.)
 export const resetMatchLinks = async (req, res) => {
   try {
     const { matchId } = req.params
     const override = await MatchOverride.findOneAndUpdate(
       { matchId: String(matchId) },
-      { $set: { servers: [], serversEdited: false, updatedAt: Date.now() }, $setOnInsert: { matchId: String(matchId) } },
+      {
+        $set: {
+          servers: [], serversEdited: false, fieldsEdited: false,
+          category: '', status: 'normal', eventName: '', tournamentLogo: '',
+          homeTeam: '', homeLogo: '', awayTeam: '', awayLogo: '',
+          startTime: null, durationMinutes: 120,
+          updatedAt: Date.now()
+        },
+        $setOnInsert: { matchId: String(matchId) }
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    )
+    res.json(override)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// Full edit of an API match — stores teams/league/category/time/banner/channels
+// as an override that REPLACES the provider data until Reset.
+export const updateProviderMatch = async (req, res) => {
+  try {
+    const { matchId } = req.params
+    const b = req.body || {}
+    const servers = (Array.isArray(b.channels) ? b.channels : [])
+      .map(c => buildServerFromChannel({ title: c.title, link: c.link, api: c.drm, type: c.type, hidden: c.hidden === true }))
+      .filter(Boolean)
+
+    const override = await MatchOverride.findOneAndUpdate(
+      { matchId: String(matchId) },
+      {
+        $set: {
+          fieldsEdited: true,
+          category: b.category || '',
+          status: b.status || 'normal',
+          eventName: b.eventName || '',
+          tournamentLogo: b.tournamentLogo || '',
+          homeTeam: b.homeTeam || '',
+          homeLogo: b.homeLogo || '',
+          awayTeam: b.awayTeam || '',
+          awayLogo: b.awayLogo || '',
+          startTime: b.startTime ? new Date(b.startTime) : null,
+          durationMinutes: Number(b.durationMinutes) || 120,
+          banner: b.banner || '',
+          servers,
+          serversEdited: true,
+          updatedAt: Date.now()
+        },
+        $setOnInsert: { matchId: String(matchId) }
+      },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     )
     res.json(override)

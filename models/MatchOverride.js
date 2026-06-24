@@ -40,6 +40,20 @@ const matchOverrideSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Full-match field edits for an API match. When `fieldsEdited` is true these
+  // REPLACE the provider's match info; "Reset" sets it back to false (restores
+  // the original API data).
+  fieldsEdited: { type: Boolean, default: false },
+  category: { type: String, default: '' },
+  status: { type: String, default: 'normal' },
+  eventName: { type: String, default: '' },
+  tournamentLogo: { type: String, default: '' },
+  homeTeam: { type: String, default: '' },
+  homeLogo: { type: String, default: '' },
+  awayTeam: { type: String, default: '' },
+  awayLogo: { type: String, default: '' },
+  startTime: { type: Date, default: null },
+  durationMinutes: { type: Number, default: 120 },
   updatedAt: {
     type: Date,
     default: Date.now

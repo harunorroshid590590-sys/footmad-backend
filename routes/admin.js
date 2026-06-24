@@ -12,6 +12,7 @@ import {
   upsertOverride,
   deleteOverride,
   updateMatchLinks,
+  updateProviderMatch,
   resetMatchLinks,
   setMatchHidden,
   createCustomMatch,
@@ -27,6 +28,7 @@ router.use(adminAuth)
 router.get('/stats', getStats)
 router.get('/matches', getAllMatchesAdmin)
 router.put('/matches/:matchId/links', updateMatchLinks)
+router.put('/matches/:matchId', updateProviderMatch)
 router.post('/matches/:matchId/reset', resetMatchLinks)
 router.post('/matches/:matchId/hide', setMatchHidden)
 router.post('/custom-matches', createCustomMatch)

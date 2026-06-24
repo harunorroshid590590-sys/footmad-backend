@@ -12,6 +12,7 @@ const customChannelSchema = new mongoose.Schema(
     type: { type: String, default: 'M3U8' },
     link: { type: String, default: '' },
     drm: { type: String, default: '' },
+    hidden: { type: Boolean, default: false },
     order: { type: Number, default: 1 }
   },
   { _id: false }
