@@ -43,8 +43,9 @@ const isAllowedOrigin = (origin) => {
   if (!origin) return true // non-browser requests (curl, server-to-server)
   if (corsOrigins.includes('*') || corsOrigins.includes(origin)) return true
   try {
-    // Allow any Vercel deployment (production + preview URLs) by default.
-    return /\.vercel\.app$/i.test(new URL(origin).hostname)
+    const host = new URL(origin).hostname
+    // Allow any Vercel deployment, plus the 590.live domain (Cloudflare host).
+    return /\.vercel\.app$/i.test(host) || host === '590.live' || /\.590\.live$/i.test(host)
   } catch {
     return false
   }
