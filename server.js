@@ -39,13 +39,18 @@ const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://l
   .map(origin => origin.trim())
   .filter(Boolean)
 
+// Cloudflare-hosted frontend domains allowed in addition to the env list.
+const allowedHosts = ['590.live', 'footmad.xyz']
+
 const isAllowedOrigin = (origin) => {
   if (!origin) return true // non-browser requests (curl, server-to-server)
   if (corsOrigins.includes('*') || corsOrigins.includes(origin)) return true
   try {
     const host = new URL(origin).hostname
-    // Allow any Vercel deployment, plus the 590.live domain (Cloudflare host).
-    return /\.vercel\.app$/i.test(host) || host === '590.live' || /\.590\.live$/i.test(host)
+    // Allow the listed domains (and their subdomains) plus any Vercel deployment.
+    if (allowedHosts.includes(host)) return true
+    if (allowedHosts.some(h => host.endsWith('.' + h))) return true
+    return /\.vercel\.app$/i.test(host)
   } catch {
     return false
   }
