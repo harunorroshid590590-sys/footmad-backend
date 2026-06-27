@@ -47,10 +47,11 @@ const isAllowedOrigin = (origin) => {
   if (corsOrigins.includes('*') || corsOrigins.includes(origin)) return true
   try {
     const host = new URL(origin).hostname
-    // Allow the listed domains (and their subdomains) plus any Vercel deployment.
+    // Allow the listed domains (and their subdomains), plus any Vercel or
+    // Cloudflare Pages deployment (production + preview hash URLs).
     if (allowedHosts.includes(host)) return true
     if (allowedHosts.some(h => host.endsWith('.' + h))) return true
-    return /\.vercel\.app$/i.test(host)
+    return /\.vercel\.app$/i.test(host) || /\.pages\.dev$/i.test(host)
   } catch {
     return false
   }
